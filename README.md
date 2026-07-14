@@ -209,10 +209,7 @@ The following figure shows the evolution of the phase field with varying values 
 
 
 
-<p align="center">
-  ![alt text](figures/example1.png)
-</p>
-
+<img width="454" height="474" alt="example1" src="https://github.com/user-attachments/assets/1cc7ae00-46c4-45d7-80d1-0f5ae7775f22" />
 
 <p align="center">
   <em>Figure 1: Evolution of the droplet and its interaction with the diffuse porous obstacle.</em>
