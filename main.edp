@@ -1,0 +1,483 @@
+load "iovtk";
+include "getARGV.idp"
+
+
+// Parameters for visualization
+
+real[int] colorhsv=[ // color hsv model
+   4./6., 1 , 0.5, // dark blue
+   4./6., 1 , 1, // blue
+   5./6., 1 , 1, // magenta
+   1, 1. , 1, // red
+   1, 0.5 , 1 // light red
+   ];
+ real[int] viso(32);
+
+ for (int i = 0; i < viso.n; i++){
+    viso[i] = -1.025 + i*0.067;
+ }
+
+int[int] Order = [1];
+int[int] Orderv = [1, 1, 1, 1];
+
+
+
+
+// Parameters for the simulation
+real T = 30;											// terminal time
+real dt = 0.01;											// delta t
+int n = T/dt;											// number of time discretization
+real adt = 1./dt;										// conjugate of dt
+real sigma = 24.5*(3/(2*sqrt(2))); 						// interface density
+real epsilon = 0.01;									// binary fluid interface thickness
+real m = 2*1e-5; 										// mobility
+real delta = getARGV("--delta", 0.01);					// obstacle interface thickness 
+real g = 0.98;											// gravitational acceleration
+real error = 1; 										// error holder
+real tol = 1e-6;										// tolerance
+real alp = 10000;										// constant in the interpolation
+real minh = 0.25*min(epsilon,delta);					// holder for the min triangle diameter
+int maxiter = 500;										// maximum number of iterations for the newton method
+int nn =101;											// number of nodes for the initial uniform mesh
+real rh1 = 1;											// lower bound for density
+real rh2 = 1000;										// upper bound for density
+real et1 = 0.1;											// lower bound for viscosity
+real et2 = 10;											// upper bound for viscosity
+real totenergy;											// holder for the total energy
+real phylenergy;										// holder for the hydrophylic energy
+real dissenergy;										// holder for the dissipative energy
+real kinenergy;											// holder for the kinetic energy
+
+
+if(delta > 1) delta = delta*1e-4;						// adjustment for the values of delta
+
+
+
+// For storing data
+string folder = "Data_delta"+(delta*1e4)+"x1e-4";
+system("rm -r "+folder);
+system("mkdir -p "+folder+" "+folder+"/state "+folder+"/phase "+folder+"/chem "+folder+"/obstacle");
+
+
+ofstream params(folder+"/parameter_values.txt"); 
+
+params << "T = " <<  T
+<< "\n dt = " << dt
+<< "\n n = " << n
+<< "\n sigma = " <<  sigma
+<< "\n m = " << m 			
+<< "\n epsilon = " << epsilon	
+<< "\n delta = " << delta
+<< "\n g = " << g
+<< "\n alp = " << alp
+<< "\n rho1 = " <<  rh1
+<< "\n rho2 = " << rh2
+<< "\n eta1 = " << et1
+<< "\n eta2 = " <<  et2
+<< endl;
+
+params.flush;
+
+
+// Defining the uniform mesh
+
+mesh Th = square(1*nn,2.5*nn, [1*x,2.5*y], flags = 1); 
+
+
+
+// Defining FE-spaces
+fespace Vh(Th, P1b);
+fespace Phb(Th, P1b);
+fespace Ph(Th, P1);
+fespace Po(Th, P0);
+fespace Xh(Th, [P1,P1]);
+fespace Yh(Th, [P1b,P1b,P1]);
+
+
+// Defining finite elements
+Vh ux,uy;
+Vh wx, wy;
+Vh oldux, olduy;
+Ph p,q;
+Ph speed;
+Ph u1x, u1y;
+
+
+Ph phi; //place holder for the phase field
+Ph dphi;
+Ph oldphi;
+Ph mu;
+Ph oldmu;
+Ph dmu;
+Ph psi;
+Ph Psiad;
+Ph Psi;
+Ph zeta;
+Ph vsigma;
+
+Ph rho; //desity function
+Ph oldrho; //desity function
+Ph drho; //desity function
+Ph olddrho; //desity function
+Ph eta; // viscosity
+Ph oldeta; // old viscosity
+Ph alphau; //obstacle porous u
+Ph alphaphi; //obstacle porous phi
+
+
+
+// // specs for the obstacle and the initial bubble for the intersecting
+// real trcenterx = 0;
+// real trcentery = 1.4;
+// real trrad = 0.5*0.25;
+
+// real drcenterx = 0;
+// real drcentery = 1.7;
+// real drrad = 0.25;
+
+
+// // specs for the obstacle and the initial bubble for the pinning
+// real trcenterx = 0;
+// real trcentery = 1.35;
+// real trrad = 0.75*0.25;
+
+// real drcenterx = 0;
+// real drcentery = 1.8;
+// real drrad = 0.25;
+
+// specs for the obstacle and the initial bubble
+real trcenterx = 0;
+real trcentery = 1.35;
+real trrad = 0.5*0.25;
+
+real drcenterx = 0;
+real drcentery = 1.875;
+real drrad = 0.25;
+
+
+
+
+/* For initializing obstacle phase field	*/
+func real phi0(real t){
+    return tanh( t/sqrt(2) );
+} 
+
+/* For initializing binary fluid phase field */
+func real psi0(real t){
+    return (sin(t))*( abs(t) <= pi/2 ) + (sign(t))*( abs(t) > pi/2 );
+} 
+
+
+/* For defining signum function */
+func real sgn(real t){
+	return (t>0.)-(t<0.); 
+}
+
+/* Interpolation function Brinkman */
+macro alphaumac(Psi) {
+  alphau = (alp/(2*delta))*(1-Psi) + (0)*( Psi > 1) + (alp/delta)*( Psi < -1 );
+} //EOF
+
+/* Interpolation function Neumann */
+macro alphaphimac(Psi){
+	alphaphi = ( ( (1 - 1e-6*alp*delta)/(2) )*Psi + ( (1+ 1e-6*alp*delta)/(2) ) )*(abs(Psi) <= 1) + (1)*( Psi > 1) + (1e-6*alp*delta)*( Psi < -1 );
+} //EOF
+
+
+
+/* Macro for evaluating total energy */
+macro totalenergymac(ux,uy,phi){
+
+	totenergy = int2d(Th)( 0.5*rho*( ux^2 + uy^2 ) ) + int2d(Th)( 0.5*sigma*alphaphi*epsilon*( dx(phi)^2 + dy(phi)^2 ) + 
+		sigma*(1./epsilon)*( 0.25*( (1 - 2*phi^2 + phi^4) )*(abs(phi) <= 1) + ( (abs(phi) - 1)^2 )*( abs(phi) > 1 ) ) );
+
+} // EOF
+
+
+/* Macro for evaluating hydrophylic energy */
+macro phylicenergymac(ux,uy,oldux,olduy,phi,oldphi){
+
+	phylenergy = int2d(Th)( 0.5*oldrho*( (ux - oldux)^2 + (uy-olduy)^2 ) ) + int2d(Th)( alphaphi*( ( dx(phi) - dx(oldphi) )^2 + ( dy(phi) - dy(oldphi) )^2 ) ) ;
+
+} // EOF
+
+/* Macro for evaluating dissipative energy */
+macro dissipativeenergymac(ux,uy,mu){
+
+	dissenergy = 2*int2d(Th)( eta*( dx(ux)^2 + dy(uy)^2 + 0.5*( dy(ux) + dx(uy) )^2 ) ) 
+		+ m*int2d(Th)( alphaphi*( dx(mu)^2 + dy(mu)^2 ) ) + int2d(Th)( alphau*( ux^2 + uy^2 ) );
+
+} // EOF
+
+/* Macro for evaluating kinetic energy */
+macro kineticenergymac(ux,uy){
+
+	kinenergy = int2d(Th)( rho*g*( 0*ux + (-1)*uy ) );
+
+} // EOF
+
+
+
+
+macro density(phi){
+
+	real invAt = (rh2+rh1)/(rh2-rh1); 
+	
+	rho = ((0.25)*rh1)*( phi <= -invAt ) + ( ( 1/rh1 )*( ( (rh2-rh1)/2 )*(phi) + (rh2+rh1)/2 )^2 + (0.25)*rh1)*(phi > -invAt )*(phi < (- ( rh2/(rh2-rh1) )) )
+			+ ( ( (rh2-rh1)/2 )*(phi) + (rh2+rh1)/2 )*(phi >= (- ( rh2/(rh2-rh1) )) )*(phi <= ( rh2/(rh2-rh1) ) ) 
+			+ ( -( 1/rh1 )*( ( (rh2-rh1)/2 )*(phi) - (rh2+rh1)/2 )^2 + rh2 + (0.75)*rh1 )*( phi > ( rh2/(rh2-rh1) ) )*(phi < invAt ) 
+			+ ( rh2 + 3*rh1/4 )*( phi >= invAt );
+
+} //
+
+
+macro derdensity(phi){
+
+	real invAt = (rh2+rh1)/(rh2-rh1); 
+	
+	drho = ( 0 )*( phi <= -invAt ) + ( ( 2/rh1 )*( ( (rh2-rh1)/2 )*(phi) + (rh2+rh1)/2 )*( (rh2-rh1)/2 ) )*(phi > -invAt )*(phi < (- ( rh2/(rh2-rh1) )) )
+			+ ( (rh2-rh1)/2 )*(phi >= (- ( rh2/(rh2-rh1) )) )*(phi <= ( rh2/(rh2-rh1) ) ) 
+			+ ( -( 2/rh1 )*( ( (rh2-rh1)/2 )*(phi) - (rh2+rh1)/2 )*( (rh2-rh1)/2 ) )*( phi > ( rh2/(rh2-rh1) ) )*(phi < invAt ) 
+			+ ( 0 )*( phi >= invAt );
+
+} //
+
+macro viscosity(phi){
+
+	real invAtet = (et2+et1)/(et2-et1); 
+	
+	eta = ((0.25)*et1)*( phi <= -invAtet ) + ( ( 1/et1 )*( ( (et2-et1)/2 )*(phi) + (et2+et1)/2 )^2 + (0.25)*et1 )*(phi > -invAtet )*(phi < (- ( et2/(et2-et1) )) )
+			+ ( ( (et2-et1)/2 )*(phi) + (et2+et1)/2 )*(phi >= (- ( et2/(et2-et1) )) )*(phi <= ( et2/(et2-et1) ) ) + ( -( 1/et1 )*( ( (et2-et1)/2 )*(phi) - (et2+et1)/2 )^2 + et2 + 3*et1/4 )*( phi > ( et2/(et2-et1) ) )*(phi < invAtet ) 
+			+ ( et2 + 3*et1/4 )*( phi >= invAtet );
+
+} //
+
+
+
+
+/* Testing initialization of phase fields and initial refinement of mesh */
+
+Psi = psi0( (1/(delta))*( abs(x - trcenterx) + abs(y-trcentery) - trrad ) ); // initial obstacle
+
+oldphi = phi0( (-1)*(1/(epsilon))*( sqrt(( x - drcenterx )^2 + ( y - drcentery )^2) - (drrad)  ) ); // initial bubble
+
+Th = adaptmesh(Th, oldphi*Psi, hmin = minh, hmax = 0.075, nbvx = 60000, keepbackvertices=true, splitpbedge=true, maxsubdiv=4/*, ratio = 1.1*/);
+
+
+
+
+
+////////////////////////////////////////////////////////
+//
+//		Defining solvers
+//
+////////////////////////////////////////////////////////
+
+
+
+problem CH([dphi,dmu],[psi,zeta], solver = UMFPACK) = int2d(Th)( adt*( dphi*psi ) +  (alphaphi)*m*( dx(dmu)*dx(psi) + dy(dmu)*dy(psi) ) )
+									+ int2d(Th)( (alphaphi)*sigma*epsilon*( dx(dphi)*dx(zeta) + dy(dphi)*dy(zeta) ) - dmu*zeta )
+									+ int2d(Th)( (dt/oldrho)*(  (oldphi)^2*( dx(dmu)*dx(psi) + dy(dmu)*dy(psi) ) ) )
+									+ int2d(Th)( (sigma/epsilon)*( 3*(phi^2)*( abs(phi) <= 1) + 3*( abs(phi) > 1) )*dphi*zeta )
+									+ int2d(Th)( (sigma/epsilon)*( -oldphi )*zeta - adt*( oldphi*psi ) )
+											-int2d(Th)( oldphi*( oldux*dx(psi) + olduy*dy(psi) ) )
+									+ int2d(Th)( adt*( phi*psi ) +  (alphaphi)*m*( dx(mu)*dx(psi) + dy(mu)*dy(psi) ) )
+									+ int2d(Th)( (dt/oldrho)*( (oldphi)^2*( dx(mu)*dx(psi) + dy(mu)*dy(psi) ) ) )					
+									+ int2d(Th)( (alphaphi)*sigma*epsilon*( dx(phi)*dx(zeta) + dy(phi)*dy(zeta) ) ) 
+									+ int2d(Th)( (sigma/epsilon)*( ( phi^3 )*(abs(phi) <= 1) + ( 3*phi - 2*( sgn(phi) ) )*(abs(phi) > 1) )*zeta - mu*zeta  );
+
+problem NS([ux,uy,p],[wx,wy,q], solver = UMFPACK) = int2d(Th)( adt*( 0.5*(rho + oldrho) )*( ux*wx + uy*wy ) ) + int2d(Th)( alphau*( ux*wx + uy*wy ) )
+								+ int2d(Th)( (0.5)*oldrho*( ( oldux*dx(ux) + olduy*dy(ux) )*wx + ( oldux*dx(uy) + olduy*dy(uy) )*wy ) )
+								- int2d(Th)( (alphaphi)*(0.5)*(m*drho)*( ( dx(mu)*dx(ux) + dy(mu)*dy(ux) )*wx + ( dx(mu)*dx(uy) + dy(mu)*dy(uy) )*wy ) )
+								- int2d(Th)( (0.5)*oldrho*( ( oldux*dx(wx) + olduy*dy(wx) )*ux + ( oldux*dx(wy) + olduy*dy(wy) )*uy ) )
+								+ int2d(Th)( (alphaphi)*(0.5)*(m*drho)*( ( dx(mu)*dx(wx) + dy(mu)*dy(wx) )*ux + ( dx(mu)*dx(wy) + dy(mu)*dy(wy) )*uy ) )
+								+ int2d(Th)( 2*eta*( dx(ux)*dx(wx) + dy(uy)*dy(wy) + 0.5*( dy(ux) + dx(uy) )*( dy(wx) + dx(wy) ) ) )
+								- int2d(Th)( p*( dx(wx) + dy(wy) ) + q*( dx(ux) + dy(uy) ) + tol*p*q )
+								- int2d(Th)( (alphaphi)*mu*( dx(oldphi)*wx + dy(oldphi)*wy ) + rho*g*( 0*wx + (-1)*wy ) )
+								- int2d(Th)( adt*( oldrho*( oldux*wx + olduy*wy ) ) )
+								+ on(1,2,3,4, ux = 0) + on(1,2,3,4, uy = 0);
+
+
+
+
+
+/* Initializing txt file for relative mass */
+ofstream recmass(folder+"/mass_evals.txt"); 
+
+recmass << "Time\t" << "Relative mass\t" << "Drifted\t" << "Chemical" << endl;
+
+real relmass;		// holder for the relative mass
+real driftmass;		// holder for the convective part of the mass
+real chemmass;		// holder for the chemical potential influenced part of the mass
+
+
+
+/* Initializing the binary fluid phase-field and velocity fields */
+
+oldphi = phi0( (-1)*(1/(epsilon))*( sqrt(( x - drcenterx )^2 + ( y - drcentery )^2) - (drrad) ) ); // initial bubble
+
+phi = oldphi;
+
+oldmu = 0;																							// initial chemical potential
+
+density(oldphi);		// computing the density
+
+derdensity(oldphi);		// computing the derivative of the density
+
+oldrho = rho;			// holding the density
+
+viscosity(oldphi);		// computing the viscosity
+
+oldeta = eta;			// holding viscosity
+
+oldux = 0;				// initializing x-componend of the velocity field
+
+olduy = 0;				// initializing y-componend of the velocity field
+
+
+/* Storing vtu files for paraview visualization */
+
+savevtk(folder+"/phase/phi0.vtu", Th, phi, dataname="phi", order = Order);
+
+savevtk(folder+"/chem/mu0.vtu", Th, mu, dataname="mu", order = Order);
+
+u1x = oldux; u1y = olduy;
+
+savevtk(folder+"/state/state0.vtu", Th, [u1x,u1y,0], p, order = Orderv);
+
+
+/* Refining mesh */
+Th = adaptmesh(Th, phi*Psi, hmin = minh, hmax = 0.075, nbvx = 60000, keepbackvertices=1, splitpbedge=1, maxsubdiv=2, ratio = 1.1);
+
+/* Storing energy data */
+
+ofstream energy(folder+"/energy_values.txt"); 
+
+energy << "Time\t" << "Total energy\t" << "Disspative energy\t" << "Phyllic energy\t" << "Kinetic Energy\t" << "Global LHS" << endl;
+
+totalenergymac(oldux,olduy,oldphi);
+
+dissipativeenergymac(oldux,olduy,oldmu);
+
+kineticenergymac(oldux,olduy);
+
+real inittotalenergy = totenergy;
+
+real holdphylenergy = 0;
+
+real holddissenergy = dt*dissenergy;
+
+real holdkinenergy = dt*kinenergy;
+
+energy << 0 << "\t" << totenergy << "\t" << dissenergy << "\t" << 0 << "\t" << kinenergy << endl;
+
+
+
+/* Resolution of time-dependent problems */
+for(int j = 0; j < n; j++){
+
+	cout << "Time t = " << (j+1)*dt << endl;
+
+	if(j<11){
+
+		// recompute the obstacle for better accuracy while the bubble has not touched it yet
+		Psi = psi0( (1/(delta))*( abs(x - trcenterx) + abs(y-trcentery) - trrad ) ); 
+		
+		// Storing new obstacles for visualization
+		savevtk(folder+"/obstacle/Psi"+j+".vtk", Th, Psi, dataname="Psi", order = Order);
+		
+		// Re-evaluating the interpolating functions
+		alphaumac(Psi);
+		alphaphimac(Psi);
+	}
+
+	
+	/* Entering the Newton's method */
+	for(int k = 0; k < maxiter ; k++ ){
+
+		CH;	// compute CH
+
+		phi = dphi + phi; mu = dmu + mu;	// update phi and mu
+
+		error = int2d(Th)( dphi^2); 		// evalute norm of the Newton direction
+
+		cout << "Error: " << error << " Mass: " << int2d(Th)(phi) << endl; // Output error and mass for quality control
+
+		if( error < tol ) break;		// stopping criterion
+
+	}
+
+	density(phi); // evaluate density
+
+	derdensity(phi);	// evaluate density derivative
+
+	viscosity(phi);		// evaluate viscosity
+
+
+	NS;		// compute the Navier--Stokes solutions
+
+
+	/* Computations for the energy inequality */
+
+	totalenergymac(ux,uy,phi);
+
+	phylicenergymac(ux,uy,oldux,olduy,phi,oldphi);
+
+	dissipativeenergymac(ux,uy,mu);
+
+	kineticenergymac(ux,uy);
+
+	holdphylenergy += phylenergy;
+
+	holddissenergy += dt*dissenergy;
+
+	holdkinenergy += dt*kinenergy;
+
+	energy << (j+1)*dt << "\t" << totenergy << "\t" << dissenergy << "\t" << phylenergy << "\t" << kinenergy << "\t" << (totenergy + holdphylenergy + holddissenergy - holdkinenergy) << endl;
+
+	cout << "Time = "+(j+1)*dt << " LHS = " << (totenergy + phylenergy + holddissenergy - holdkinenergy) << " RHS = " << inittotalenergy << endl;
+
+	
+
+	/* Update everything */
+
+	oldphi = phi; oldmu = mu; 
+	oldrho = rho; 
+	oldux = ux; olduy = uy;
+
+
+	/* Save the solutions for paraview visualization */
+	savevtk(folder+"/phase/phi"+(j+1)+".vtu", Th, phi, dataname="phi", order = Order);
+
+	savevtk(folder+"/chem/mu"+(j+1)+".vtu", Th, mu, dataname="mu", order = Order);
+
+	u1x = ux; u1y = uy;
+
+	savevtk(folder+"/state/state"+(j+1)+".vtu", Th, [u1x,u1y,0], p, order = Orderv);
+
+	
+	/* Computations for the relative mass */
+
+	relmass = int2d(Th)( 0.5*(Psi+1)*phi );
+
+	driftmass = int2d(Th)( 0.5*phi*( ux*dx(Psi) + uy*dy(Psi) ) );
+
+	chemmass = int2d(Th)( (m*0.5)*alphaphi*( dx(mu)*dx(Psi) + dy(mu)*dy(Psi) ) );
+
+
+	recmass << (j+1)*dt+"\t" << relmass+"\t" << driftmass+"\t" << chemmass << endl;
+
+
+	
+	/* Refine mesh according the the phase-fields */
+	Th = adaptmesh(Th, phi*Psi, hmin = 0.5*delta, hmax = 0.075, nbvx = 80000, keepbackvertices=1,  maxsubdiv=6, err= 1e-4/*, ratio = 1.1*/);
+}
+
+
+
+
+
+
+
+
+
