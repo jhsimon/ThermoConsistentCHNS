@@ -210,7 +210,7 @@ The following figure shows the evolution of the phase field with varying values 
 
 
 <p align="center">
-  figures/example1.png
+  <figures/example1.png
 </p>
 
 
