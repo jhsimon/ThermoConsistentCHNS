@@ -208,8 +208,9 @@ This repository contains the accompanying code for forthcoming joint work by **J
 The following figure shows the evolution of the phase field with varying values of delta as the bubble interacts with the diffuse porous obstacle.
 
 
-
+<p align="center">
 <img width="454" height="474" alt="example1" src="https://github.com/user-attachments/assets/1cc7ae00-46c4-45d7-80d1-0f5ae7775f22" />
+</p>
 
 <p align="center">
   <em>Figure 1: Evolution of the droplet and its interaction with the diffuse porous obstacle.</em>
