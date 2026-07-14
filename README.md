@@ -1,6 +1,6 @@
 # Diffuse-Interface Two-Phase Flow with a Porous Obstacle
 
-A **FreeFEM** simulation of a rising two-phase bubble interacting with a diffuse porous obstacle. The model couples a thermodynamically consistent Cahn–Hilliard/Navier–Stokes equations, Brinkman penalization inside the obstacle, adaptive mesh refinement, and discrete energy diagnostics.
+A **FreeFEM** simulation of a rising two-phase droplet interacting with a diffuse porous obstacle. The model couples a thermodynamically consistent Cahn–Hilliard/Navier–Stokes equations, Brinkman penalization inside the obstacle, adaptive mesh refinement, and discrete energy diagnostics.
 
 ## Model overview
 
