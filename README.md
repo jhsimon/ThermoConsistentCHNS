@@ -38,17 +38,16 @@ The source also includes `getARGV.idp`, which is normally distributed with FreeF
 
 ## Running the simulation
 
-The uploaded source is named `main.txt`. FreeFEM programs conventionally use the `.edp` extension, so rename or copy it first:
+Run with the default obstacle interface delta = 0.01
 
 ```bash
-cp main.txt main.edp
 FreeFem++ main.edp
 ```
 
 Run with a custom obstacle-interface thickness:
 
 ```bash
-FreeFem++ main.edp --delta 0.02
+FreeFem++ main.edp --delta 25
 ```
 
 The default is:
