@@ -203,6 +203,26 @@ This repository contains the accompanying code for forthcoming joint work by **J
 
 
 
+## Numerical Examples
+
+The following figure shows the evolution of the phase field with varying values of delta as the bubble interacts with the diffuse porous obstacle.
+
+
+
+<p align="center">
+  <igure/example1.png
+</p>
+
+
+<p align="center">
+  <em>Figure 1: Evolution of the droplet and its interaction with the diffuse porous obstacle.</em>
+</p>
+
+The corresponding simulation data can be visualized using ParaView from the VTU files stored in the `phase/`, `chem/`, and `state/` output directories.
+
+
+
+
 ## Author
 
 John Sebastian Simon
