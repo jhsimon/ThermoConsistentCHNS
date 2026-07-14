@@ -197,11 +197,6 @@ For a reproducible run, record:
 Output files can become large because the default setup performs `3000` time steps and writes phase, chemical-potential, and state files at every step.
 
 
-## Accompanying Work
-
-This repository contains the accompanying code for forthcoming joint work by **John Sebastian Simon**, **Christian Kahle**, and **Michael Hinze**. The associated manuscript is currently in preparation. Citation information will be added once the work becomes publicly available.
-
-
 
 ## Numerical Examples
 
@@ -219,6 +214,9 @@ The following figure shows the evolution of the phase field with varying values 
 The corresponding simulation data can be visualized using ParaView from the VTU files stored in the `phase/`, `chem/`, and `state/` output directories.
 
 
+## Accompanying Work
+
+This repository contains the accompanying code for forthcoming joint work by **John Sebastian Simon**, **Christian Kahle**, and **Michael Hinze**. The associated manuscript is currently in preparation. Citation information will be added once the work becomes publicly available.
 
 
 ## Author
